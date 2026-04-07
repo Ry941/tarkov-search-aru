@@ -30,6 +30,10 @@
       padding: 15px; margin-bottom: 15px; border-radius: 4px;
     }
     .item-name { font-size: 1.2rem; font-weight: bold; margin-top: 0; margin-bottom: 10px; }
+    /* リンクにマウスを乗せた時の動き */
+    .item-name a:hover { opacity: 0.8; text-decoration: underline !important; }
+    .task-list a:hover { color: #bfa15f !important; }
+
     .badge-flea {
       display: inline-block; background-color: #d32f2f; color: white;
       padding: 3px 8px; border-radius: 4px; font-size: 0.8rem;
@@ -145,17 +149,16 @@
         return;
       }
 
-      // --- 🌟 ここが追加した「完全一致優先並び替え」の魔法です ---
+      // 完全一致優先並び替え
       items.sort((a, b) => {
         const searchWord = input.toLowerCase();
         const aExact = (a.shortName.toLowerCase() === searchWord || a.name.toLowerCase() === searchWord);
         const bExact = (b.shortName.toLowerCase() === searchWord || b.name.toLowerCase() === searchWord);
         
-        if (aExact && !bExact) return -1; // aを上に
-        if (!aExact && bExact) return 1;  // bを上に
-        return 0; // どちらも同じならそのまま
+        if (aExact && !bExact) return -1;
+        if (!aExact && bExact) return 1; 
+        return 0; 
       });
-      // --------------------------------------------------------
 
       items.forEach(item => {
         let bestTraderName = "なし";
@@ -193,7 +196,10 @@
 
         const card = document.createElement('div');
         card.className = 'result-card';
-        let html = `<h2 class="item-name">${item.name} (${item.shortName})</h2>`;
+        
+        // ▼ 1. アイテム名をwiki検索リンクにする
+        const itemSearchUrl = `https://wikiwiki.jp/eft/?cmd=search&word=${encodeURIComponent(item.shortName)}`;
+        let html = `<h2 class="item-name"><a href="${itemSearchUrl}" target="_blank" style="color: #bfa15f; text-decoration: none;">🔗 ${item.name} (${item.shortName})</a></h2>`;
 
         if (isFleaRecommended) {
           html += `<div class="badge-flea">🔥 フリマ行き！ (2倍以上の価値)</div>`;
@@ -202,11 +208,14 @@
         html += `<div class="info-line">🏪 店売り最高: <span class="highlight">${bestTraderPrice.toLocaleString()}₽</span> (${bestTraderName})</div>`;
         html += `<div class="info-line">📈 フリマ相場: ${fleaPrice > 0 ? fleaPrice.toLocaleString() + '₽' : 'データなし'}</div>`;
         
+        // ▼ 2. タスク名をwiki検索リンクにする
         if (relatedTasks.length > 0) {
           html += `<ul class="task-list"><strong>📋 関連タスク:</strong>`;
           relatedTasks.forEach(req => {
             const firText = req.fir ? '<span class="fir-req">[インレイド必須]</span>' : '';
-            html += `<li>・${req.name} (x${req.count || 1}) ${firText}</li>`;
+            const taskSearchUrl = `https://wikiwiki.jp/eft/?cmd=search&word=${encodeURIComponent(req.name)}`;
+            
+            html += `<li>・<a href="${taskSearchUrl}" target="_blank" style="color: #e0e0e0; text-decoration: underline;">${req.name}</a> (x${req.count || 1}) ${firText}</li>`;
           });
           html += `</ul>`;
         } else {
