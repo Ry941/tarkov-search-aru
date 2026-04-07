@@ -1,0 +1,228 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Tarkov 簡易検索</title>
+  <style>
+    body {
+      background-color: #1a1a1a; color: #e0e0e0;
+      font-family: 'Helvetica Neue', Arial, sans-serif;
+      margin: 0; padding: 20px;
+    }
+    .container { max-width: 600px; margin: 0 auto; }
+    h1 { font-size: 1.5rem; color: #bfa15f; margin-bottom: 15px; }
+    .search-box { display: flex; gap: 10px; margin-bottom: 20px; }
+    input[type="text"] {
+      flex: 1; padding: 10px; font-size: 16px;
+      background-color: #2a2a2a; border: 1px solid #444;
+      color: #fff; border-radius: 4px;
+    }
+    button {
+      padding: 10px 20px; font-size: 16px;
+      background-color: #5a6b5a; color: white;
+      border: none; border-radius: 4px; cursor: pointer;
+    }
+    button:hover { background-color: #4a5b4a; }
+    
+    .result-card {
+      background-color: #252525; border-left: 4px solid #444;
+      padding: 15px; margin-bottom: 15px; border-radius: 4px;
+    }
+    .item-name { font-size: 1.2rem; font-weight: bold; margin-top: 0; margin-bottom: 10px; }
+    .badge-flea {
+      display: inline-block; background-color: #d32f2f; color: white;
+      padding: 3px 8px; border-radius: 4px; font-size: 0.8rem;
+      font-weight: bold; margin-bottom: 10px;
+    }
+    .info-line { margin: 5px 0; font-size: 0.95rem; }
+    .highlight { color: #bfa15f; font-weight: bold; }
+    
+    .task-list { margin-top: 10px; padding-left: 0; list-style-type: none; font-size: 0.9rem; color: #aaa; }
+    .task-list li { margin-bottom: 5px; }
+    .fir-req { color: #ff9800; font-weight: bold; }
+    
+    #loading { display: none; color: #888; margin-bottom: 10px; }
+    #task-status { font-size: 0.8rem; color: #bfa15f; margin-bottom: 20px; }
+    #error-msg { color: #ff5252; font-weight: bold; }
+  </style>
+</head>
+<body>
+
+<div class="container">
+  <h1>Tarkov 簡易検索</h1>
+  <div id="task-status">🔄 裏側でタスク一覧を準備中...</div>
+  
+  <div class="search-box">
+    <input type="text" id="searchInput" placeholder="アイテム名 (例: salewa, gpu)" onkeypress="handleKeyPress(event)">
+    <button onclick="searchItem()">検索</button>
+  </div>
+  
+  <div id="loading">検索中...</div>
+  <div id="results"></div>
+</div>
+
+<script>
+  let allTasks = []; 
+
+  async function fetchTasks() {
+    const taskQuery = `
+      query {
+        tasks {
+          name
+          objectives {
+            ... on TaskObjectiveItem {
+              item { id }
+              count
+              foundInRaid
+            }
+          }
+        }
+      }
+    `;
+    try {
+      const response = await fetch('https://api.tarkov.dev/graphql', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+        body: JSON.stringify({ query: taskQuery })
+      });
+      const json = await response.json();
+      
+      if (json.data && json.data.tasks) {
+        allTasks = json.data.tasks;
+        document.getElementById('task-status').innerText = "✅ タスク情報スタンバイ完了 (爆速で検索できます)";
+      }
+    } catch (error) {
+      document.getElementById('task-status').innerText = "⚠️ タスク情報の準備に失敗しました";
+    }
+  }
+
+  window.onload = fetchTasks;
+
+  const itemQuery = `
+    query GetItem($itemName: String!) {
+      items(name: $itemName) {
+        id
+        name
+        shortName
+        sellFor { vendor { name }, price }
+      }
+    }
+  `;
+
+  function handleKeyPress(event) {
+    if (event.key === 'Enter') searchItem();
+  }
+
+  async function searchItem() {
+    const input = document.getElementById('searchInput').value.trim();
+    if (!input) return;
+
+    const resultsDiv = document.getElementById('results');
+    const loadingDiv = document.getElementById('loading');
+    
+    resultsDiv.innerHTML = ''; 
+    loadingDiv.style.display = 'block';
+
+    try {
+      const response = await fetch('https://api.tarkov.dev/graphql', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Accept': 'application/json' },
+        body: JSON.stringify({ query: itemQuery, variables: { itemName: input } })
+      });
+
+      const json = await response.json();
+      loadingDiv.style.display = 'none';
+
+      if (json.errors) {
+        resultsDiv.innerHTML = `<p id="error-msg">APIエラー: ${json.errors[0].message}</p>`;
+        return;
+      }
+
+      let items = json.data.items;
+      if (!items || items.length === 0) {
+        resultsDiv.innerHTML = '<p>アイテムが見つかりませんでした。</p>';
+        return;
+      }
+
+      // --- 🌟 ここが追加した「完全一致優先並び替え」の魔法です ---
+      items.sort((a, b) => {
+        const searchWord = input.toLowerCase();
+        const aExact = (a.shortName.toLowerCase() === searchWord || a.name.toLowerCase() === searchWord);
+        const bExact = (b.shortName.toLowerCase() === searchWord || b.name.toLowerCase() === searchWord);
+        
+        if (aExact && !bExact) return -1; // aを上に
+        if (!aExact && bExact) return 1;  // bを上に
+        return 0; // どちらも同じならそのまま
+      });
+      // --------------------------------------------------------
+
+      items.forEach(item => {
+        let bestTraderName = "なし";
+        let bestTraderPrice = 0;
+        let fleaPrice = 0;
+
+        if (item.sellFor && item.sellFor.length > 0) {
+          const fleaData = item.sellFor.find(sell => sell.vendor.name === "Flea Market");
+          if (fleaData) fleaPrice = fleaData.price;
+
+          const traderPrices = item.sellFor
+            .filter(sell => sell.vendor.name !== "Flea Market" && sell.price > 0)
+            .sort((a, b) => b.price - a.price);
+          
+          if (traderPrices.length > 0) {
+            bestTraderName = traderPrices[0].vendor.name;
+            bestTraderPrice = traderPrices[0].price;
+          }
+        }
+
+        const isFleaRecommended = bestTraderPrice > 0 && fleaPrice >= (bestTraderPrice * 2);
+
+        let relatedTasks = [];
+        if (allTasks.length > 0) {
+          allTasks.forEach(task => {
+            if (task.objectives) {
+              task.objectives.forEach(obj => {
+                if (obj.item && obj.item.id === item.id) {
+                  relatedTasks.push({ name: task.name, count: obj.count, fir: obj.foundInRaid });
+                }
+              });
+            }
+          });
+        }
+
+        const card = document.createElement('div');
+        card.className = 'result-card';
+        let html = `<h2 class="item-name">${item.name} (${item.shortName})</h2>`;
+
+        if (isFleaRecommended) {
+          html += `<div class="badge-flea">🔥 フリマ行き！ (2倍以上の価値)</div>`;
+        }
+
+        html += `<div class="info-line">🏪 店売り最高: <span class="highlight">${bestTraderPrice.toLocaleString()}₽</span> (${bestTraderName})</div>`;
+        html += `<div class="info-line">📈 フリマ相場: ${fleaPrice > 0 ? fleaPrice.toLocaleString() + '₽' : 'データなし'}</div>`;
+        
+        if (relatedTasks.length > 0) {
+          html += `<ul class="task-list"><strong>📋 関連タスク:</strong>`;
+          relatedTasks.forEach(req => {
+            const firText = req.fir ? '<span class="fir-req">[インレイド必須]</span>' : '';
+            html += `<li>・${req.name} (x${req.count || 1}) ${firText}</li>`;
+          });
+          html += `</ul>`;
+        } else {
+          html += `<div class="info-line" style="color: #888; margin-top: 10px;">📋 関連タスク: なし</div>`;
+        }
+
+        card.innerHTML = html;
+        resultsDiv.appendChild(card);
+      });
+
+    } catch (error) {
+      loadingDiv.style.display = 'none';
+      resultsDiv.innerHTML = `<p id="error-msg">通信エラーが発生しました: ${error.message}</p>`;
+    }
+  }
+</script>
+
+</body>
+</html>
